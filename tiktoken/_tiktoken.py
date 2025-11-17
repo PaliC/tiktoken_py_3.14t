@@ -102,6 +102,8 @@ class CoreBPE:
         "_special_regex",
         "_sorted_token_bytes",
         "_special_tokens",
+        "_chunk_size",
+        "_thread_pool",
     )
 
     def __init__(
@@ -114,7 +116,8 @@ class CoreBPE:
             encoder = dict(encoder)
         if not isinstance(special_tokens_encoder, dict):
             special_tokens_encoder = dict(special_tokens_encoder)
-
+        self._chunk_size = 50
+        self._thread_pool = ThreadPoolExecutor(max_workers=MAX_WORKERS)
         self.encoder = dict(encoder)
         self.special_tokens_encoder = dict(special_tokens_encoder)
         self.decoder = {token: token_bytes for token_bytes, token in self.encoder.items()}
@@ -305,29 +308,42 @@ class CoreBPE:
                 break
         return tokens, last_piece_token_len
 
-    def _encode_native_parallel(
-        self, matches: List[Any]
-    ) -> list[Rank]:
+    def _encode_native_parallel(self, matches: list) -> tuple[list[Rank], int]:
+        if len(matches) < self._chunk_size:
+            return self._encode_matches_sequential(matches)
         
-        def _process_match(idx_match_pair: tuple[int, Any]) -> tuple[int, list[Rank], int]:
-            idx, match = idx_match_pair
-            piece = match.group(0).encode("utf-8")
-            token = self.encoder.get(piece)
-            if token is not None:
-                return idx, [token], 1
-            else:
-                bpe_tokens = byte_pair_encode(piece, self.encoder)
-                return idx, bpe_tokens, len(bpe_tokens)
+        def process_chunk(chunk):
+            chunk_tokens = []
+            last_len = 0
+            
+            for match in chunk:
+                piece = match.group(0).encode("utf-8")
+                token = self.encoder.get(piece)
+                
+                if token is not None:
+                    chunk_tokens.append(token)
+                    last_len = 1
+                else:
+                    bpe_tokens = byte_pair_encode(piece, self.encoder)
+                    chunk_tokens.extend(bpe_tokens)
+                    last_len = len(bpe_tokens)
+            
+            return chunk_tokens, last_len
         
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            results = list(executor.map(_process_match, enumerate(matches)))
+        chunks = [matches[i:i + self._chunk_size] 
+                  for i in range(0, len(matches), self._chunk_size)]
+        
+        futures = [self._thread_pool.submit(process_chunk, chunk) 
+                   for chunk in chunks]
         
         tokens = []
-        last_piece_token_len = 0
-        for idx, match_tokens, token_len in results:
-            tokens.extend(match_tokens)
-            last_piece_token_len = token_len
-        return tokens, last_piece_token_len
+        last_len = 0
+        for future in futures:
+            chunk_tokens, token_len = future.result()
+            tokens.extend(chunk_tokens)
+            last_len = token_len
+        
+        return tokens, last_len
 
     def _encode_unstable_native(
         self, text: str, allowed_special: AbstractSet[str]
@@ -405,6 +421,9 @@ class CoreBPE:
             while last_piece_len < len(tokens) and token_is_all_space(tokens[-last_piece_len - 1]):
                 last_piece_len += 1
         return tokens, last_piece_len
+
+    def __del__(self):
+        self._thread_pool.shutdown(wait=False)
 
 
 __all__ = ["CoreBPE", "byte_pair_encode", "byte_pair_split"]
