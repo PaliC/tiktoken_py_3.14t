@@ -17,7 +17,8 @@ _REGEX_TIMEOUT: float = 2.0
 import subprocess
 import os
 
-MAX_WORKERS = 4
+MAX_WORKERS = 10
+BATCH_SIZE = 1024
 
 
 from concurrent.futures import ThreadPoolExecutor
@@ -116,7 +117,7 @@ class CoreBPE:
             encoder = dict(encoder)
         if not isinstance(special_tokens_encoder, dict):
             special_tokens_encoder = dict(special_tokens_encoder)
-        self._chunk_size = 50
+        self._chunk_size = BATCH_SIZE
         self._thread_pool = ThreadPoolExecutor(max_workers=MAX_WORKERS)
         self.encoder = dict(encoder)
         self.special_tokens_encoder = dict(special_tokens_encoder)
@@ -146,7 +147,7 @@ class CoreBPE:
 
     def encode_ordinary(self, text: str) -> list[Rank]:
         ret: list[Rank] = []
-        match_count = 0
+        # match_count = 0
         for match in self._regex.finditer(text, timeout=_REGEX_TIMEOUT):
             match_count += 1
             
@@ -156,7 +157,7 @@ class CoreBPE:
                 ret.append(token)
             else:
                 ret.extend(byte_pair_encode(piece, self.encoder))
-        print(f"found {match_count}")
+        # print(f"found {match_count}")
         return ret
 
     def encode(self, text: str, allowed_special: AbstractSet[str]) -> list[Rank]:
@@ -284,7 +285,8 @@ class CoreBPE:
             end = next_special.start() if next_special else len(text)
             matches = list(self._regex.finditer(text[start:end], timeout=_REGEX_TIMEOUT))
             # Only parallelize if we have enough work
-            if len(matches) > 0:  # Threshold to avoid overhead
+            # if len(matches) > 10:  # Threshold to avoid overhead
+            if False:
                 tokens_chunk, last_piece_token_len = self._encode_native_parallel(matches)
                 tokens.extend(tokens_chunk)
             else:

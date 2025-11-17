@@ -1,1 +1,3 @@
 naive duration is 16.316s using 4 cores
+batching + thread reuse brings time down to 3.578s
+optimizing hyper params brings things down to 2.914s

@@ -53,8 +53,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--encoding",
-        default="cl100k_base",
-        help="encoding name to use, defaults to cl100k_base",
+        default="gpt2",
+        help="encoding name to use, defaults to gpt2",
     )
     return parser.parse_args()
 
