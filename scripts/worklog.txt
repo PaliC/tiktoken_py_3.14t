@@ -1,0 +1,1 @@
+naive duration is 16.316s using 4 cores

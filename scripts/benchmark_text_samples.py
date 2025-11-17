@@ -28,7 +28,7 @@ def run(sample_dir: Path, encoding_name: str) -> None:
     print(f"Encoding: {encoding_name}")
     print(f"Sample directory: {sample_dir.resolve()}")
     print()
-
+    total_duration = 0
     for file_path in files:
         bytes_len, tokens, elapsed = benchmark_file(file_path, encoding)
         print(f"{file_path.name}")
@@ -36,6 +36,9 @@ def run(sample_dir: Path, encoding_name: str) -> None:
         print(f"  tokens: {tokens:,}")
         print(f"  duration: {elapsed:.3f}s")
         print()
+        total_duration += elapsed
+    print(f"Total duration: {total_duration:.3f}s")
+    return total_duration
 
 
 def parse_args() -> argparse.Namespace:

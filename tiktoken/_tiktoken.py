@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from array import array
 from bisect import bisect_left
-from typing import AbstractSet, Iterable, Sequence
-
+from typing import AbstractSet, Any, Iterable, List, Sequence
+import platform
+import os
 import regex
 
 Rank = int
@@ -13,6 +14,13 @@ _SPACE_BYTES = {ord(" "), ord("\n"), ord("\t")}
 # Similar to fancyregex's backtrack_limit, this prevents regex operations from taking too long.
 _REGEX_TIMEOUT: float = 2.0
 
+import subprocess
+import os
+
+MAX_WORKERS = 4
+
+
+from concurrent.futures import ThreadPoolExecutor
 
 def _byte_pair_merge(ranks: dict[bytes, Rank], piece: bytes) -> list[tuple[int, Rank]]:
     if len(piece) < 2:
@@ -271,18 +279,23 @@ class CoreBPE:
                     start_find = match.start() + 1
 
             end = next_special.start() if next_special else len(text)
-            count = 0
-            for match in self._regex.finditer(text[start:end], timeout=_REGEX_TIMEOUT):
-                count += 1
-                piece = match.group(0).encode("utf-8")
-                token = self.encoder.get(piece)
-                if token is not None:
-                    tokens.append(token)
-                    last_piece_token_len = 1
-                else:
-                    bpe_tokens = byte_pair_encode(piece, self.encoder)
-                    tokens.extend(bpe_tokens)
-                    last_piece_token_len = len(bpe_tokens)
+            matches = list(self._regex.finditer(text[start:end], timeout=_REGEX_TIMEOUT))
+            # Only parallelize if we have enough work
+            if len(matches) > 0:  # Threshold to avoid overhead
+                tokens_chunk, last_piece_token_len = self._encode_native_parallel(matches)
+                tokens.extend(tokens_chunk)
+            else:
+                # Sequential for small workloads
+                for match in matches:
+                    piece = match.group(0).encode("utf-8")
+                    token = self.encoder.get(piece)
+                    if token is not None:
+                        tokens.append(token)
+                        last_piece_token_len = 1
+                    else:
+                        bpe_tokens = byte_pair_encode(piece, self.encoder)
+                        tokens.extend(bpe_tokens)
+                        last_piece_token_len = len(bpe_tokens)
 
             if next_special:
                 tokens.append(self.special_tokens_encoder[next_special.group(0)])
@@ -290,7 +303,30 @@ class CoreBPE:
                 last_piece_token_len = 0
             else:
                 break
-        print(f"found {count}")
+        return tokens, last_piece_token_len
+
+    def _encode_native_parallel(
+        self, matches: List[Any]
+    ) -> list[Rank]:
+        
+        def _process_match(idx_match_pair: tuple[int, Any]) -> tuple[int, list[Rank], int]:
+            idx, match = idx_match_pair
+            piece = match.group(0).encode("utf-8")
+            token = self.encoder.get(piece)
+            if token is not None:
+                return idx, [token], 1
+            else:
+                bpe_tokens = byte_pair_encode(piece, self.encoder)
+                return idx, bpe_tokens, len(bpe_tokens)
+        
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            results = list(executor.map(_process_match, enumerate(matches)))
+        
+        tokens = []
+        last_piece_token_len = 0
+        for idx, match_tokens, token_len in results:
+            tokens.extend(match_tokens)
+            last_piece_token_len = token_len
         return tokens, last_piece_token_len
 
     def _encode_unstable_native(

@@ -151,7 +151,11 @@ def test_basic_roundtrip(make_enc):
 def test_hyp_roundtrip(make_enc: Callable[[], tiktoken.Encoding], text):
     enc = make_enc()
 
-    assert text == enc.decode(enc.encode(text))
+    # encode() normalizes invalid surrogate pairs before handing them to Rust, so do
+    # the same fixup here to match the documented behaviour.
+    normalized = text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+
+    assert normalized == enc.decode(enc.encode(text))
 
 
 @pytest.mark.parametrize("make_enc", ENCODING_FACTORIES)
